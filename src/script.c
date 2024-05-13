@@ -6,21 +6,19 @@
 #define MAX(x, y) (x > y ? x : y)
 #define CLAMP(x, y, z) (MAX(MIN(z, y), x))
 #define LERP(a, b, c) (a + (b - a) * c)
-#define RAND(min, max) (random() % (max - min) + min)
+#define RAND(min, max) (rand() % (max - min) + min)
 #define PRINT(...) { printf(__VA_ARGS__); printf("\n"); }
 #define PI  3.14159
 #define PI2 PI / 2
 #define PI4 PI / 4
 
-#define WIDTH  1920
-#define HEIGHT 1080
 #define UPSCALE 0.2
-#define SPEED 0.1
+#define SPEED 5
 #define SENSITIVITY 0.001
 #define CAMERA_LOCK PI2 * 0.9
 #define FOV PI4
 #define AI_ENABLED 1
-#define AI_VERBOSE 1
+#define AI_VERBOSE 0
 
 // ---
 
@@ -45,11 +43,12 @@ void ai_play();
 
 // ---
 
-Camera cam    = { WIDTH, HEIGHT, FOV, 0.1, 100, 0, 0, { 4, 2, 4 }, { 0, 0, -1 }, { 1, 0, 0 }};
-Canvas canvas = { WIDTH, HEIGHT };
+Camera cam    = { 0, 0, FOV, 0.1, 100, 0, 0, { 4, 2, 4 }, { 0, 0, -1 }, { 1, 0, 0 }};
+Canvas canvas;
 mat4 view, proj, blank;
 vec3 mouse;
 u32 shader;
+f32 fps, tick = 0;
 
 Material black_piece = { { 0.20, 0.20, 0.20 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
 Material white_piece = { { 0.70, 0.70, 0.70 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
@@ -80,7 +79,7 @@ u8 game_end = 0;
 // ---
 
 void main() {
-  canvas_init(&canvas, (CanvasInitConfig) { 1, "Chess" });
+  canvas_init(&canvas, &cam, (CanvasInitConfig) { 1, "Chess" });
   glm_mat4_identity(blank);
   srand(time(0));
 
@@ -94,7 +93,7 @@ void main() {
     model_create("obj/queen.obj"),
   };
 
-  u32 lowres_fbo = canvas_create_FBO(WIDTH * UPSCALE, HEIGHT * UPSCALE, GL_NEAREST, GL_NEAREST);
+  u32 lowres_fbo = canvas_create_FBO(cam.width * UPSCALE, cam.height * UPSCALE, GL_NEAREST, GL_NEAREST);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   generate_proj_mat(cam, proj);
@@ -113,6 +112,9 @@ void main() {
   canvas_uni1f(shader, "PNT_LIGS[0].QUA", 0.017);
   
   while (!glfwWindowShouldClose(canvas.window)) {
+    fps = 1 / (glfwGetTime() - tick);
+    tick = glfwGetTime();
+
     canvas_unim4(shader, "PROJ", proj[0]);
     canvas_unim4(shader, "VIEW", view[0]);
 
@@ -186,7 +188,6 @@ void main() {
           if      (anim.stage == 1) glm_translate(piece->model, (vec3) { anim_move[0] + 0.5, anim.pos, anim_move[1] + 0.5 });
           else if (anim.stage == 2) glm_translate(piece->model, (vec3) { LERP(anim_move[0],   anim_move[2], anim.pos) + 0.5, 1, LERP(anim_move[1], anim_move[3], anim.pos) + 0.5 });
           else if (anim.stage == 3) glm_translate(piece->model, (vec3) { row + 0.5, 1 - anim.pos, col + 0.5 });
-          animation_run(&anim, (anim.pos * 3 + 1) * 0.05);
         }
         else
           glm_translate(piece->model, (vec3) { row + 0.5, 0, col + 0.5 });
@@ -200,17 +201,19 @@ void main() {
     canvas_unim4(shader, "VIEW", blank[0]);
     canvas_uni3f(shader, "MAT.COL", !white_turn, !white_turn, !white_turn);
     glm_mat4_identity(cube->model);
-    glm_scale(cube->model, (vec3) { (f32) HEIGHT / WIDTH * 0.01, 1 * 0.01, 0 });
+    glm_scale(cube->model, (vec3) { (f32) cam.height / cam.width * 0.01, 1 * 0.01, 0 });
     glm_translate(cube->model, (vec3) { -0.5, -0.5 });
     model_draw(cube, shader);
 
-    glBlitNamedFramebuffer(0, lowres_fbo, 0, 0, WIDTH, HEIGHT, 0, 0, WIDTH * UPSCALE, HEIGHT * UPSCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glBlitNamedFramebuffer(lowres_fbo, 0, 0, 0, WIDTH * UPSCALE, HEIGHT * UPSCALE, 0, 0, WIDTH, HEIGHT, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitNamedFramebuffer(0, lowres_fbo, 0, 0, cam.width, cam.height, 0, 0, cam.width * UPSCALE, cam.height * UPSCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitNamedFramebuffer(lowres_fbo, 0, 0, 0, cam.width * UPSCALE, cam.height * UPSCALE, 0, 0, cam.width, cam.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     glfwPollEvents();
     glfwSwapBuffers(canvas.window); 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (anim.stage) animation_run(&anim, ((anim.pos * 3 + 1) * 3) / fps);
   }
+  
   glfwTerminate();
 }
 
@@ -436,9 +439,9 @@ void ai_play() {
 void handle_inputs(GLFWwindow* window) {
   // MOVEMENT
   vec3 prompted_move = { 
-    (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ?  SPEED : 0) + (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ? -SPEED : 0), 
-    (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS ?  SPEED : 0) + (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS ? -SPEED : 0), 
-    (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ?  SPEED : 0) + (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ? -SPEED : 0)
+    (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ?  SPEED / fps : 0) + (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ? -SPEED / fps : 0), 
+    (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS ?  SPEED / fps : 0) + (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS ? -SPEED / fps : 0), 
+    (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ?  SPEED / fps : 0) + (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ? -SPEED / fps : 0)
   };
 
   if (prompted_move[0] || prompted_move[1] || prompted_move[2]) {
@@ -465,7 +468,7 @@ void handle_inputs(GLFWwindow* window) {
   if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !mouse[2]) {
     mouse[2] = 1;
     f32* buffer = malloc(sizeof(f32) * 3);
-    glReadPixels(WIDTH / 2, HEIGHT / 2, 1, 1, GL_RGB, GL_FLOAT, buffer);
+    glReadPixels(cam.width / 2, cam.height / 2, 1, 1, GL_RGB, GL_FLOAT, buffer);
     update_selection(roundf(buffer[0] * 10), roundf(buffer[1] * 10));
   }
 
