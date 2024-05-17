@@ -1,22 +1,13 @@
 #include "canvas.h"
-#include "meshes.h" 
 #include <time.h>
 
-#define MIN(x, y) (x < y ? x : y)
-#define MAX(x, y) (x > y ? x : y)
-#define CLAMP(x, y, z) (MAX(MIN(z, y), x))
-#define LERP(a, b, c) (a + (b - a) * c)
-#define RAND(min, max) (rand() % (max - min) + min)
-#define PRINT(...) { printf(__VA_ARGS__); printf("\n"); }
-#define PI  3.14159
-#define PI2 PI / 2
-#define PI4 PI / 4
-
 #define UPSCALE 0.2
+#define FULLSCREEN 1
+#define SCREEN_SIZE 1
 #define SPEED 5
+#define FOV PI4
 #define SENSITIVITY 0.001
 #define CAMERA_LOCK PI2 * 0.9
-#define FOV PI4
 #define AI_ENABLED 1
 #define AI_VERBOSE 0
 
@@ -43,22 +34,24 @@ void ai_play();
 
 // ---
 
-Camera cam    = { 0, 0, FOV, 0.1, 100, 0, 0, { 4, 2, 4 }, { 0, 0, -1 }, { 1, 0, 0 }};
-Canvas canvas;
-mat4 view, proj, blank;
+Camera cam = { FOV, 0.1, 100, { 4, 2, 4 } };
 vec3 mouse;
 u32 shader;
-f32 fps, tick = 0;
+f32 fps = 1, tick = 0;
 
+Material board       = { { 0.60, 0.60, 0.60 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
+Material board_top   = { { 1.00, 1.00, 1.00 }, 1, 1, 0.5, 255, 2, 0, 1, 0 };
 Material black_piece = { { 0.20, 0.20, 0.20 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
 Material white_piece = { { 0.70, 0.70, 0.70 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
 Material selec_piece = { { 0.45, 0.30, 0.60 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
 Material alert_piece = { { 0.95, 0.30, 0.30 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
-Material board_top   = { { 1.00, 1.00, 1.00 }, 1, 1, 0.4, 500, 2, 0, 1, 0 };
-Material board       = { { 0.60, 0.60, 0.60 }, 1, 1, 0.0, 255, 0, 0, 1, 0 };
 Material absolute    = { { 1.00, 1.00, 1.00 }, 1, 1, 0.0, 255, 0, 0, 0, 1 };
 
+PntLig light = { { 1, 1, 1 }, { 8, 8, 4 }, 1, 0.07, 0.017 };
+
 Animation anim = { 0, 3, 0 };
+
+// ---
 
 Slot game[8][8] = {
   { { BLACK_ROOK }, { BLACK_KNIGHT }, { BLACK_BISHOP }, { BLACK_KING }, { BLACK_QUEEN }, { BLACK_BISHOP }, { BLACK_KNIGHT }, { BLACK_ROOK } },
@@ -79,75 +72,63 @@ u8 game_end = 0;
 // ---
 
 void main() {
-  canvas_init(&canvas, &cam, (CanvasInitConfig) { 1, "Chess" });
-  glm_mat4_identity(blank);
+  canvas_init(&cam, (CanvasInitConfig) { "Chess", 1, FULLSCREEN, SCREEN_SIZE });
   srand(time(0));
 
-  Model* cube = model_create("obj/cube.obj");
+  Material* m_cube[]  = { &board, &board_top, &selec_piece, &absolute };
+  Material* m_piece[] = { &black_piece, &white_piece, &selec_piece, &alert_piece, &absolute };
+  Model* cube = model_create("obj/cube.obj", 1, m_cube);
   Model* piece_models[] = { 
-    model_create("obj/king.obj"),
-    model_create("obj/pawn.obj"),
-    model_create("obj/knight.obj"),
-    model_create("obj/bishop.obj"),
-    model_create("obj/rook.obj"),
-    model_create("obj/queen.obj"),
+    model_create("obj/king.obj",   1, m_piece),
+    model_create("obj/pawn.obj",   1, m_piece),
+    model_create("obj/knight.obj", 1, m_piece),
+    model_create("obj/bishop.obj", 1, m_piece),
+    model_create("obj/rook.obj",   1, m_piece),
+    model_create("obj/queen.obj",  1, m_piece),
   };
 
   u32 lowres_fbo = canvas_create_FBO(cam.width * UPSCALE, cam.height * UPSCALE, GL_NEAREST, GL_NEAREST);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-  generate_proj_mat(cam, proj);
-  generate_view_mat(cam, view);
-
-  canvas_create_texture(GL_TEXTURE0, "img/w.ppm",     GL_MIRRORED_REPEAT, GL_MIRRORED_REPEAT, GL_NEAREST, GL_NEAREST);
-  canvas_create_texture(GL_TEXTURE1, "img/b.ppm",     GL_MIRRORED_REPEAT, GL_MIRRORED_REPEAT, GL_NEAREST, GL_NEAREST);
-  canvas_create_texture(GL_TEXTURE2, "img/board.ppm", GL_MIRRORED_REPEAT, GL_MIRRORED_REPEAT, GL_NEAREST, GL_NEAREST);
+  canvas_create_texture(GL_TEXTURE0, "img/w.ppm",     TEXTURE_DEFAULT);
+  canvas_create_texture(GL_TEXTURE1, "img/b.ppm",     TEXTURE_DEFAULT);
+  canvas_create_texture(GL_TEXTURE2, "img/board.ppm", TEXTURE_DEFAULT);
 
   shader = shader_create_program("shd/obj.v", "shd/obj.f");
+  generate_proj_mat(&cam, shader);
+  generate_view_mat(&cam, shader);
+ 
+  canvas_set_pnt_lig(shader, light, 0);
   
-  canvas_uni3f(shader, "PNT_LIGS[0].POS", white_turn * 8, 8, 4);
-  canvas_uni3f(shader, "PNT_LIGS[0].COL", 1, 1, 1);
-  canvas_uni1f(shader, "PNT_LIGS[0].CON", 1);
-  canvas_uni1f(shader, "PNT_LIGS[0].LIN", 0.07);
-  canvas_uni1f(shader, "PNT_LIGS[0].QUA", 0.017);
-  
-  while (!glfwWindowShouldClose(canvas.window)) {
-    fps = 1 / (glfwGetTime() - tick);
-    tick = glfwGetTime();
-
-    canvas_unim4(shader, "PROJ", proj[0]);
-    canvas_unim4(shader, "VIEW", view[0]);
-
+  while (!glfwWindowShouldClose(cam.window)) {
     canvas_set_material(shader, absolute);
     for (u8 row = 0; row < 8; row++) {
       for (u8 col = 0; col < 8; col++) {
-        if (!game[row][col].is_mv && !game[row][col].piece) continue;
         canvas_uni3f(shader, "MAT.COL", (f32) row / 10, (f32) col / 10, 0);
-
-        glm_mat4_identity(cube->model);
-        glm_translate(cube->model, (vec3) { row + 0.15, 0, col + 0.15 });
-        glm_scale(cube->model, (vec3) { 0.7, 0.1, 0.7 });
-        model_draw(cube, shader);
-
-        if (!game[row][col].piece) continue;
-        Model* piece = piece_models[game[row][col].piece % 6];
-        glm_mat4_identity(piece->model);
-        glm_translate(piece->model, (vec3) { row + 0.5, 0, col + 0.5 });
-        model_draw(piece, shader);
+        if (game[row][col].piece) {
+          Model* piece = piece_models[game[row][col].piece % 6];
+          model_bind(piece, shader, 0);
+          glm_translate(piece->model, (vec3) { row + 0.5, 0, col + 0.5 });
+          model_draw(piece, shader);
+        }
+        else if (game[row][col].is_mv) {
+          model_bind(cube, shader, 0);
+          glm_translate(cube->model, (vec3) { row + 0.15, 0, col + 0.15 });
+          glm_scale(cube->model, (vec3) { 0.7, 0.1, 0.7 });
+          model_draw(cube, shader);
+        }
       }
     }
 
-    handle_inputs(canvas.window);
+    handle_inputs(cam.window);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    canvas_set_material(shader, board);
-    glm_mat4_identity(cube->model);
+    model_bind(cube, shader, 1);
     glm_scale(cube->model, (vec3) { 8, 1, 8 });
     glm_translate(cube->model, (vec3) { 0, -1.011, 0 });
     model_draw(cube, shader);
 
-    canvas_set_material(shader, board_top);
-    glm_mat4_identity(cube->model);
+    model_bind(cube, shader, 2);
     glm_scale(cube->model, (vec3) { 8, 0.01, 8 });
     glm_translate(cube->model, (vec3) { 0, -1.001, 0 });
     model_draw(cube, shader);
@@ -156,8 +137,7 @@ void main() {
       for (u8 col = 0; col < 8; col++) {
         if (!game[row][col].piece) {
           if (game[row][col].is_mv) {
-            canvas_set_material(shader, selec_piece);
-            glm_mat4_identity(cube->model);
+            model_bind(cube, shader, 3);
             glm_translate(cube->model, (vec3) { row + 0.15, 0, col + 0.15 });
             glm_scale(cube->model, (vec3) { 0.7, 0.1, 0.7 });
             model_draw(cube, shader);
@@ -165,55 +145,36 @@ void main() {
           continue;
         }
 
-        canvas_set_material(shader, game[row][col].piece < 7 ? white_piece : black_piece);
-        if (selected[0] == row && selected[1] == col) 
-          canvas_set_material(shader, selec_piece);
-        else if (game[row][col].is_mv) 
-          canvas_set_material(shader, alert_piece);
-
-        glm_mat4_identity(cube->model);
-        if (anim.stage && row == anim_move[2] && col == anim_move[3])  {
-          if      (anim.stage == 1) glm_translate(cube->model, (vec3) { anim_move[0] + 0.15, anim.pos, anim_move[1] + 0.15 });
-          else if (anim.stage == 2) glm_translate(cube->model, (vec3) { LERP(anim_move[0],   anim_move[2], anim.pos) + 0.15, 1, LERP(anim_move[1], anim_move[3], anim.pos) + 0.15 });
-          else if (anim.stage == 3) glm_translate(cube->model, (vec3) { row + 0.15, 1 - anim.pos, col + 0.15 });
-        }
-        else
-          glm_translate(cube->model, (vec3) { row + 0.15, 0, col + 0.15 });
-        glm_scale(cube->model, (vec3) { 0.7, 0.1, 0.7 });
-        model_draw(cube, shader);
-
         Model* piece = piece_models[game[row][col].piece % 6];
-        glm_mat4_identity(piece->model);
+        model_bind(piece, shader, game[row][col].is_mv ? 4 : (selected[0] == row && selected[1] == col ? 3 : (game[row][col].piece < 7 ? 2 : 1)));
         if (anim.stage && row == anim_move[2] && col == anim_move[3])  {
-          if      (anim.stage == 1) glm_translate(piece->model, (vec3) { anim_move[0] + 0.5, anim.pos, anim_move[1] + 0.5 });
-          else if (anim.stage == 2) glm_translate(piece->model, (vec3) { LERP(anim_move[0],   anim_move[2], anim.pos) + 0.5, 1, LERP(anim_move[1], anim_move[3], anim.pos) + 0.5 });
-          else if (anim.stage == 3) glm_translate(piece->model, (vec3) { row + 0.5, 1 - anim.pos, col + 0.5 });
+          if      (anim.stage == 1) glm_translate(piece->model, (vec3) { anim_move[0], anim.pos, anim_move[1] });
+          else if (anim.stage == 2) glm_translate(piece->model, (vec3) { LERP(anim_move[0],   anim_move[2], anim.pos), 1, LERP(anim_move[1], anim_move[3], anim.pos) });
+          else if (anim.stage == 3) glm_translate(piece->model, (vec3) { row, 1 - anim.pos, col });
         }
-        else
-          glm_translate(piece->model, (vec3) { row + 0.5, 0, col + 0.5 });
+        else glm_translate(piece->model, (vec3) { row, 0, col });
+        glm_translate(piece->model, (vec3) { 0.5, 0, 0.5 });
         model_draw(piece, shader);
       }
     }
 
-    glClear(GL_DEPTH_BUFFER_BIT);
-    canvas_set_material(shader, absolute);
-    canvas_unim4(shader, "PROJ", blank[0]);
-    canvas_unim4(shader, "VIEW", blank[0]);
+    use_screen_space(&cam, shader, 1);
+    model_bind(cube, shader, 7);
     canvas_uni3f(shader, "MAT.COL", !white_turn, !white_turn, !white_turn);
-    glm_mat4_identity(cube->model);
-    glm_scale(cube->model, (vec3) { (f32) cam.height / cam.width * 0.01, 1 * 0.01, 0 });
-    glm_translate(cube->model, (vec3) { -0.5, -0.5 });
+    glm_scale(cube->model, (vec3) { (f32) 1 / (cam.width * UPSCALE) * 4, (f32) 1 / (cam.width * UPSCALE) * 4, 0 });
+    glm_translate(cube->model, (vec3) { -0.5, -0.5, 0 });
     model_draw(cube, shader);
+    use_screen_space(&cam, shader, 0);
 
     glBlitNamedFramebuffer(0, lowres_fbo, 0, 0, cam.width, cam.height, 0, 0, cam.width * UPSCALE, cam.height * UPSCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     glBlitNamedFramebuffer(lowres_fbo, 0, 0, 0, cam.width * UPSCALE, cam.height * UPSCALE, 0, 0, cam.width, cam.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     glfwPollEvents();
-    glfwSwapBuffers(canvas.window); 
+    update_fps(&fps, &tick);
+    glfwSwapBuffers(cam.window); 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (anim.stage) animation_run(&anim, ((anim.pos * 3 + 1) * 3) / fps);
   }
-  
   glfwTerminate();
 }
 
@@ -433,7 +394,7 @@ void ai_play() {
   anim_move[1] = moves[chosen_move].move[1];
   anim_move[2] = moves[chosen_move].move[2];
   anim_move[3] = moves[chosen_move].move[3];
-  animation_run(&anim, 1);
+  animation_start(&anim);
 }
 
 void handle_inputs(GLFWwindow* window) {
@@ -454,13 +415,11 @@ void handle_inputs(GLFWwindow* window) {
     glm_vec3_add(cam.pos, lateral,  cam.pos);
     glm_vec3_add(cam.pos, frontal,  cam.pos);
     glm_vec3_add(cam.pos, vertical, cam.pos);
-    generate_view_mat(cam, view);  
+    generate_view_mat(&cam, shader);  
     canvas_uni3f(shader, "CAM", cam.pos[0], cam.pos[1], cam.pos[2]);
   };
 
   // MISC
-  if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) { cam.fov = MIN(cam.fov + PI / 100, FOV); generate_proj_mat(cam, proj); }
-  if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) { cam.fov = MAX(cam.fov - PI / 100, 0.1); generate_proj_mat(cam, proj); }
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, 1);
 
   // MOUSE BUTTON
@@ -492,7 +451,7 @@ void handle_inputs(GLFWwindow* window) {
   cam.rig[2] = sin(cam.yaw) * cos(cam.pitch);
   glm_normalize(cam.rig);
 
-  generate_view_mat(cam, view);
+  generate_view_mat(&cam, shader);
   mouse[0] = x;
   mouse[1] = y;
 }
