@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <glad/glad.h>
 #include <cglm/cglm.h>
@@ -267,7 +268,7 @@ u32 canvas_create_texture(GLenum unit, char path[], TextureConfig config) {
 typedef struct {
   vec3 col;
   f64  amb, dif, spc, shi;
-  u8   s_dif, s_spc, s_emt, lig, png;
+  u8   s_dif, s_spc, s_emt, lig, png, tex;
 } Material;
 
 void canvas_set_material(u32 shader, Material mat) {
@@ -281,6 +282,7 @@ void canvas_set_material(u32 shader, Material mat) {
   canvas_uni1i(shader, "MAT.S_EMT", mat.s_emt);
   canvas_uni1i(shader, "MAT.LIG", mat.lig);
   canvas_uni1i(shader, "MAT.PNG", mat.png);
+  canvas_uni1i(shader, "MAT.TEX", mat.tex);
 }
 
 // Animation
@@ -464,3 +466,24 @@ void canvas_set_spt_lig(u32 shader, SptLig spt_lig, u32 i) {
   sprintf(uniform, "SPT_LIGS[%i].OUT", i);
   canvas_uni1f(shader, uniform, spt_lig.out);
 }
+
+// Text ( BETA )
+
+Material m_text = { { 1, 1, 1 }, 0.0, 0.0, 0.0, 000, 0, 0, 0, 1, 1, 1 };
+
+void canvas_render_text(u32 shader, char* text, u32 font, Model* model, f32 spacing) {
+  canvas_set_material(shader, m_text);
+  canvas_uni1i(shader, "MAT.S_DIF", font);
+  canvas_uni1i(shader, "TEX_CELLS", 60);
+  canvas_uni1i(shader, "TEX_KEEP_ORIENTATION", 0);
+  
+  for (u8 i = 0; i < strlen(text); i++) {
+    canvas_uni1i(shader, "TEX_ACTIVE_CELL", text[i] - 33);
+    if (text[i] != ' ') model_draw(model, shader);
+    glm_translate(model->model, (vec3) { spacing, 0, 0 });
+  }
+
+  canvas_uni1i(shader, "TEX_ACTIVE_CELL", 0);
+  canvas_uni1i(shader, "TEX_CELLS", 1);
+  canvas_uni1i(shader, "TEX_KEEP_ORIENTATION", 0);
+} 

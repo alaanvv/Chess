@@ -10,17 +10,11 @@
 
 // --- Struct
 
-uniform sampler2D texture_diffuse1;
-uniform sampler2D texture_diffuse2;
-uniform sampler2D texture_diffuse3;
-uniform sampler2D texture_specular1;
-uniform sampler2D texture_specular2;
-
 struct Material {
   vec3 COL;
   sampler2D S_DIF, S_SPC, S_EMT;
   float SHI, AMB, DIF, SPC;
-  int LIG;
+  int LIG, PNG, TEX;
 };
 
 struct DirLig {
@@ -40,7 +34,6 @@ struct SptLig {
 // --- Setup
 
 uniform vec3 CAM;
-uniform vec2 TEX_SCALE;
 uniform Material MAT;
 uniform DirLig DIR_LIGS[DIR_LIG_AMOUNT];
 uniform PntLig PNT_LIGS[PNT_LIG_AMOUNT];
@@ -118,7 +111,11 @@ vec3 CalcSptLig(SptLig lig, vec3 normal, vec3 cam, vec3 frag_pos) {
 
 void main() {
   vec3 _color = vec3(0);
+  int alpha = 1;
 
+  if (MAT.PNG == 1 && vec3(texture(MAT.S_DIF, tex)) == vec3(0, 1, 0)) {
+    alpha = 0;
+  }
   if (MAT.LIG == 0) {
     if (DIR_LIG_ENABLE == 1)
   for (int i = 0; i < DIR_LIG_AMOUNT; i++)
@@ -133,8 +130,13 @@ void main() {
     _color += CalcSptLig(SPT_LIGS[i], nrm, CAM, pos);
   }
   else {
+    if (MAT.TEX == 1) {
+  _color = vec3(texture(MAT.S_DIF, tex));
+    }
+  else {
     _color = MAT.COL;
   }
+  }
 
-    color = vec4(_color, 1);
+  color = vec4(_color, alpha);
 }
