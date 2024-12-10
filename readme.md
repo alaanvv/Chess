@@ -8,5 +8,5 @@ My algorythm can think of only one play ahead, be kind
 
 ## Controls   
 Movement   | 	W, A, S, D
-          -|-
+-|-
 Up / Down  |	E, Q 
